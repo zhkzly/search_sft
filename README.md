@@ -201,7 +201,7 @@ You will get folders named `rollout_0` to `rollout_(rollout_num-1)` under the pa
 #### 1. Filter Responses
 
 ```bash
-python process_data/repsonse_curation/response_curation.py \
+python process_data/response_curation/response_curation.py \
   --root_path  "/path/to/your/synthesis_data" \
   --output_path "/path/to/your/curated_data"
 ```
@@ -214,7 +214,7 @@ Parameter Explanation:
 #### 2. Format Data
 
 ```bash
-python process_data/repsonse_curation/format_data.py \
+python process_data/response_curation/format_data.py \
   --input_file "/path/to/your/input_file.json"
 ```
 
@@ -224,7 +224,7 @@ The input file `formatted(len(data)).json` in the same directory is the formatte
 #### 3. Format Check
 
 ```bash
-python process_data/repsonse_curation/format_filter.py \
+python process_data/response_curation/format_filter.py \
   --input_file "/path/to/your/formatted_data.json"
 ```
 
@@ -239,6 +239,9 @@ You will get a new folder named `filter_process` in the same path as the input f
 > Run the following script after replacing the corresponding variables:
 
 ```bash
+bash sft/scripts/train_qwen_1.5b.sh
+
+# or edit and run a script under sft/scripts/ from the project root
 export OMP_NUM_THREADS=20
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
@@ -262,15 +265,13 @@ echo "output_dir: ${output_dir}"
 deepspeed \
     --master_port=9944 \
     sft/sft.py \
-    --deepspeed sft/ds_zero3_offload.json \
+    --deepspeed sft/configs/ds_zero3_offload.json \
     --model_name_or_path $base \
     --tokenizer_name_or_path $tokenizer \
     --do_train \
-    --save_safetensors true \
     --data_path $train_data \
     --lr_scheduler_type cosine \
     --output_dir $output_dir \
-    --overwrite_output_dir \
     --warmup_ratio 0.03 \
     --gradient_checkpointing true \
     --per_device_train_batch_size $bsz \
@@ -289,6 +290,9 @@ deepspeed \
 If you want to mix in other data (i.e., data that does not include tool calls), you can run the following script.
 
 ```bash
+bash sft/scripts/train_qwen_1.5b.sh
+
+# then adapt the variables below if you want to launch deepspeed manually
 export OMP_NUM_THREADS=20
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
@@ -313,16 +317,14 @@ echo "output_dir: ${output_dir}"
 deepspeed \
     --master_port=9944 \
     sft/sft.py \
-    --deepspeed sft/ds_zero3_offload.json \
+    --deepspeed sft/configs/ds_zero3_offload.json \
     --model_name_or_path $base \
     --tokenizer_name_or_path $tokenizer \
     --do_train \
-    --save_safetensors true \
     --data_path $train_data \
     --other_type_data $other_type_data \
     --lr_scheduler_type cosine \
     --output_dir $output_dir \
-    --overwrite_output_dir \
     --warmup_ratio 0.03 \
     --gradient_checkpointing true \
     --per_device_train_batch_size $bsz \

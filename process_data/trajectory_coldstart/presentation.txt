@@ -1,0 +1,518 @@
+• 可以。我分两部分讲：
+
+  1. step_level_pilot_examples.json 这个文件本身是什么，怎么来的
+  2. 当前几个轨迹处理函数分别在干什么，每一步怎么把原始 trajectory.json 变成你看到的内容
+
+  先给一个最重要的提醒：
+
+  step_level_pilot_examples.json 不是由仓库里的一个正式脚本生成的，而是我为了让你人工检查中间结果，用一次性脚本从两个 pilot 文件里抽样生成的。
+  正式处理链路还是：
+
+  - process_data/trajectory_coldstart/stepify.py
+  - process_data/trajectory_coldstart/canonicalize.py
+
+  ———
+
+  一、这个文件到底是什么
+  文件在这里：
+
+  - sft/data/step_level_pilot_examples.json
+
+  它不是统计摘要，而是一个“中间样本展示集”。
+
+  它包含三类东西：
+
+  - raw_examples
+    从 raw step 数据里挑出的代表样本
+  - canonical_examples
+    从 canonical step 数据里挑出的代表样本
+  - dropped_examples
+    从 raw step 里找出“为什么没进 canonical v0”的代表样本
+
+  也就是说，它回答的是：
+
+  - 原始 step 长什么样
+  - 规范化后变成什么样
+  - 当前规则为什么会丢样本
+
+  ———
+
+  二、它是从哪些文件来的
+  顶层字段 source_files 已经写了来源：
+
+  - sft/data/step_level_raw_pilot.jsonl
+  - sft/data/step_level_canonical_pilot_v0.jsonl
+
+  也就是说：
+
+  - 先从原始轨迹做出 raw pilot
+  - 再从 raw pilot 做出 canonical pilot
+  - 再从这两个 pilot 里抽代表样本，生成 step_level_pilot_examples.json
+
+  ———
+
+  三、先解释 raw pilot 是怎么从原始轨迹来的
+  核心函数在：
+
+  - process_data/trajectory_coldstart/stepify.py:82
+
+  ### 第 1 步：选哪些原始轨迹
+
+  在 process_data/trajectory_coldstart/common.py:37 里，会从 classified_by_f1 收集轨迹。
+
+  默认只选：
+
+  - 2_medium_f1_50-100
+  - 3_perfect_match_100
+
+  默认长度桶：
+
+  - short_lt100k
+  - medium_100k_300k
+
+  这些默认值定义在：
+
+  - process_data/trajectory_coldstart/common.py:8
+  - process_data/trajectory_coldstart/common.py:9
+
+  所以 raw pilot 不是全量原始数据，而是先经过“按质量桶和长度桶筛选”的。
+
+  ———
+
+  ### 第 2 步：把一条 trajectory 切成很多 step
+
+  原始轨迹长这样：
+
+  - system
+  - user
+  - assistant + tool call
+  - tool result
+  - assistant + tool call
+  - tool result
+  - ...
+  - assistant + task_done
+
+  在 process_data/trajectory_coldstart/stepify.py:106 里，代码会遍历每个 llm_interaction。
+
+  对第 k 个 interaction，会生成一个 step 样本：
+
+  - prefix_messages
+    = 当前步之前的全部历史
+  - target_message
+    = 当前步 assistant 的输出
+  - metadata
+    = 原始命令等补充信息
+
+  所以：
+
+  一条 trajectory 会拆成多条 step 样本。
+
+  ———
+
+  ### 第 3 步：怎么得到 prefix_messages
+
+  看这个函数：
+
+  - process_data/trajectory_coldstart/stepify.py:20
+
+  它做两件事：
+
+  1. 如果消息是 system 或 user，就原样保留 role 和 content
+  2. 如果消息里带 tool_result，就转成：
+
+  {
+    "role": "tool",
+    "tool_call_id": "...",
+    "content": "清洗后的工具输出"
+  }
+
+  这里的“清洗”是通过：
+
+  - process_data/trajectory_coldstart/common.py:23
+
+  来做的，主要去掉：
+
+  - ANSI 控制符
+  - \x1b[?2004l
+  - 一些终端残留
+
+  ———
+
+  ### 第 4 步：怎么得到 target_message
+
+  看：
+
+  - process_data/trajectory_coldstart/stepify.py:40
+
+  它把当前 interaction 的 response 转成：
+
+  {
+    "role": "assistant",
+    "content": "...",
+    "tool_calls": [...]
+  }
+
+  其中 tool_calls 通过：
+
+  - process_data/trajectory_coldstart/common.py:94
+
+  被统一成这种结构：
+
+  {
+    "id": "...",
+    "type": "function",
+    "function": {
+      "name": "...",
+      "arguments": "JSON字符串"
+    }
+  }
+
+  所以 raw step 里的 target_message 本质上就是：
+
+  “当前这一步 assistant 真正输出了什么。”
+
+  ———
+
+  ### 第 5 步：怎么打标签 target_kind
+
+  看：
+
+  - process_data/trajectory_coldstart/stepify.py:51
+
+  规则很简单：
+
+  - 如果 tool call 里有 task_done -> stop_step
+  - 如果有 tool call 但不是 task_done -> action_step
+  - 如果没有 tool call -> thought_step
+
+  所以你在 step_level_pilot_examples.json 里看到的：
+
+  - raw_action_start
+  - raw_action_mid
+  - raw_stop
+
+  本质上就是从这些 target_kind 里挑出来的。
+
+  ———
+
+  ### 第 6 步：metadata 是怎么来的
+
+  看：
+
+  - process_data/trajectory_coldstart/stepify.py:61
+
+  它会从 raw tool call 里提取：
+
+  - raw_tool_names
+  - raw_commands
+  - raw_command
+
+  如果只有一个 bash 命令，就把它放到 raw_command。
+
+  此外在 process_data/trajectory_coldstart/stepify.py:129 还会加：
+
+  - trajectory_success
+  - max_steps
+  - is_terminal_step
+  - num_prior_messages
+  - num_prior_tool_messages
+
+  ———
+
+  四、拿一条具体样本 trace 一遍
+  我们就看你现在文件里第一条：
+
+  - localstack__localstack-1066__step_000
+
+  它来自原始轨迹：
+
+  - classified_by_f1/2_medium_f1_50-100/short_lt100k/localstack__localstack-1066/trajectory.json
+
+  对应原始 interaction 是：
+
+  - 第 0 个 interaction
+    我刚才抽出来给你看了，它有：
+      - input_messages = [system, user]
+      - response.content = 一段分析
+      - response.tool_calls = bash(find | grep | head)
+
+  所以 stepify 后：
+
+  - prefix_messages
+    = 原始 interaction 0 的 input_messages 转换结果
+    也就是 system + user
+  - target_message
+    = interaction 0 的 assistant response
+  - metadata.raw_command
+    = find /workspace -type f -name "*.py" | grep -E "(ssl|cert|tls)" | head -20
+
+  这就是你在 raw_examples[0] 里看到的内容。
+
+  ———
+
+  五、canonical pilot 是怎么从 raw pilot 来的
+  核心函数在：
+
+  - process_data/trajectory_coldstart/canonicalize.py:429
+
+  流程是：
+
+  1. 先看 prefix 里的 assistant tool calls 能不能映射
+  2. 再看 target 能不能映射
+  3. 如果都能映射，就生成 canonical sample
+  4. 如果不能，就 drop 并记录原因
+
+  ———
+
+  ### 第 1 步：assistant tool call 怎么 canonicalize
+
+  看：
+
+  - process_data/trajectory_coldstart/canonicalize.py:411
+
+  它会遍历一条 assistant message 里的每个 tool call，然后对每个 tool call 调：
+
+  - process_data/trajectory_coldstart/canonicalize.py:372
+
+  ———
+
+  ### 第 2 步：tool call 怎么变 canonical
+
+  canonicalize_tool_call 做的是：
+
+  1. 先看 tool 名字是不是 task_done
+      - 如果是，直接映射成 task_done
+  2. 如果不是 task_done，那必须是 bash
+      - 否则 unsupported_source_tool
+  3. 解析 arguments
+      - 它期待里面有 command
+  4. 拿到 command 后，调用：
+
+  - process_data/trajectory_coldstart/canonicalize.py:228
+
+  ———
+
+  ### 第 3 步：find | grep | head 怎么被拆开
+
+  这个就是你最关心的。
+
+  先用：
+
+  - process_data/trajectory_coldstart/canonicalize.py:28
+
+  把命令拆成 segment。
+
+  例如：
+
+  find /workspace -type f -name "*.py" | grep -E "(ssl|cert|tls)" | head -20
+
+  拆成：
+
+  1. find /workspace -type f -name "*.py"
+  2. grep -E "(ssl|cert|tls)"
+  3. head -20
+
+  ———
+
+  ### 第 4 步：第一个 segment 决定主工具家族
+
+  在 process_data/trajectory_coldstart/canonicalize.py:234 以后，它看第一个 segment：
+
+  - 如果第一个是 find
+      - 走 find 分支
+  - 如果是 grep
+      - 走 grep 分支
+  - 如果是 sed
+      - 走 sed 分支
+  - 以此类推
+
+  对于这条命令，第一个是 find，所以进入：
+
+  - process_data/trajectory_coldstart/canonicalize.py:238
+
+  ———
+
+  ### 第 5 步：参数是怎么提出来的
+
+  #### find 部分
+
+  通过：
+
+  - process_data/trajectory_coldstart/canonicalize.py:93
+
+  得到：
+
+  - root_path = /workspace
+  - glob = *.py
+  - case_insensitive = false
+
+  #### grep 部分
+
+  然后进入：
+
+  - process_data/trajectory_coldstart/canonicalize.py:141
+
+  因为第二段是 grep -E "(ssl|cert|tls)"
+
+  所以得到：
+
+  - pattern = "(ssl|cert|tls)"
+  - is_regex = true
+  - case_insensitive = false
+
+  在 find 分支里，这些 grep 信息不会变成新的主工具，而是附着到 repo_find_files 上，作为过滤条件：
+
+  - name_pattern
+  - filter_is_regex
+  - filter_case_insensitive
+
+  #### head 部分
+
+  最后第三段 head -20 用：
+
+  - process_data/trajectory_coldstart/canonicalize.py:53
+
+  得到：
+
+  - max_lines = 20
+
+  在这个分支里，它被重命名为：
+
+  - max_results = 20
+
+  ———
+
+  ### 第 6 步：为什么 mapping_reason 是 find_grep_head
+
+  因为这条命令走的是：
+
+  - find 主命令
+  - 后接 grep
+  - 再接 head
+
+  所以最后在 process_data/trajectory_coldstart/canonicalize.py:263 返回：
+
+  {
+    "tool_name": "repo_find_files",
+    "reason": "find_grep_head"
+  }
+
+  这就是你在 canonical sample metadata 里看到的：
+
+  - mapping_reason = find_grep_head
+
+  ———
+
+  六、为什么有些 sample 会 drop
+  这个是由 process_data/trajectory_coldstart/canonicalize.py:429 决定的。
+
+  drop 有两类主要原因。
+
+  ### 1. prefix 里有历史 assistant tool call 映射失败
+
+  在这里：
+
+  - process_data/trajectory_coldstart/canonicalize.py:438
+
+  如果 require_mapped_prefix=True，而 prefix 中某条 assistant message 不能 cleanly canonicalize，就直接：
+
+  - reason = unmapped_prefix
+
+  这是当前最大 drop 来源。
+
+  ———
+
+  ### 2. target_message 本身映射失败
+
+  在这里：
+
+  - process_data/trajectory_coldstart/canonicalize.py:444
+
+  如果 target 的 raw bash 超出当前支持的规则，就 drop。
+
+  原因可能是：
+
+  - unsupported_shell_control
+  - unsupported_command_family
+  - grep_parse_failed
+  - unsupported_find_pipeline
+  - 等等
+
+  ———
+
+  七、step_level_pilot_examples.json 里的 dropped_examples 是怎么来的
+  这个不是某个现成函数自动产出的，而是我额外跑了一段脚本做的：
+
+  逻辑是：
+
+  1. 遍历 raw pilot 里的每一条 sample
+  2. 调一次：
+      - canonicalize_sample(sample, require_mapped_prefix=True)
+  3. 如果返回 None
+      - 说明会被 drop
+  4. 对每一种新的 reason
+      - 保存一条代表样本
+
+  所以 dropped_examples 的价值是：
+
+  它不是“所有丢弃样本列表”，而是“每种丢弃原因的代表样本”。
+
+  ———
+
+  八、你应该特别注意的一个实现细节
+  这个字段：
+
+  - prefix_tool_calls_canonicalized
+
+  当前实现是：
+
+  - process_data/trajectory_coldstart/canonicalize.py:459
+
+  bool(prefix_mappings or not sample.get("prefix_messages"))
+
+  这个语义其实不够好。
+
+  比如对于 step_000：
+
+  - prefix 里只有 system 和 user
+  - 没有 assistant tool call
+  - 所以 prefix_mappings = []
+  - sample.get("prefix_messages") 非空
+
+  结果这个字段会是 false
+
+  但这不表示失败，只表示：
+
+  “prefix 里没有需要映射的 assistant tool calls。”
+
+  所以这个字段我认为后面应该改名或重构，不然容易误导你。
+
+  ———
+
+  九、你现在可以怎么理解这整个文件
+  最准确的理解是：
+
+  - raw_examples
+    = stepify 的真实输出样例
+  - canonical_examples
+    = raw step 经过 canonicalize 成功后的样例
+  - dropped_examples
+    = raw step 在 canonicalize 阶段失败的代表样例
+
+  所以这个文件其实就是在向你展示：
+  ———
+
+  十、我对当前处理函数的判断
+  现在这些函数已经足够让你看清数据结构，但还不够让你直接放心训练。主要有两个原因：
+
+  1. prefix 的处理还太严格，导致 146/324
+  2. prefix_tool_calls_canonicalized 这种字段语义还不够干净
+
+  - 这套函数说明方向是对的
+  - 但下一步应该先继续打磨数据层，不要先改 trainer
+  我选 localstack__localstack-1066__step_001 这条样本，逐字段对照：
+
+  - 原始 trajectory.json
+  - raw step
+  - canonical step
+  - 为什么没 drop / 如果 drop 会因为什么

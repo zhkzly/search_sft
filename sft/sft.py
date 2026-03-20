@@ -9,7 +9,25 @@ from typing import Optional, Dict, Sequence
 import torch
 from torch.utils.data import random_split
 from torch.nn.utils.rnn import pad_sequence
-import transformers
+import importlib.util as _importlib_util
+
+_real_find_spec = _importlib_util.find_spec
+
+
+def _patched_find_spec(name, package=None):
+    if name == "torchvision":
+        return None
+    return _real_find_spec(name, package)
+
+
+if _real_find_spec("torchvision") is not None:
+    _importlib_util.find_spec = _patched_find_spec
+    try:
+        import transformers
+    finally:
+        _importlib_util.find_spec = _real_find_spec
+else:
+    import transformers
 from torch.utils.data import Dataset
 from transformers import Trainer
 import random
@@ -24,6 +42,10 @@ import shutil
 
 import matplotlib.pyplot as plt
 import numpy as np
+
+
+IGNORE_INDEX = -100
+MAX_LENGTH = 2000
 
 
 @dataclass
@@ -53,15 +75,12 @@ class TrainingArguments(transformers.TrainingArguments):
     cache_dir: Optional[str] = field(default=None)
     optim: str = field(default="adamw_torch")
     model_max_length: int = field(
-        default=512,
+        default=MAX_LENGTH,
         metadata={
             "help": "Maximum sequence length. Sequences will be right padded (and possibly truncated)."
         },
     )
 
-
-IGNORE_INDEX = -100
-MAX_LENGTH = 2000
 
 def process(sample, tokenizer):
     # build inputs with format `<bos> X Y <eos>` and labels with format `<ignore> ... <ignore> Y <eos>`
@@ -148,21 +167,32 @@ def print_function(example, tokenizer):
 
 
 def get_dataset(file_path, tokenizer, other_dataset=False):
+    max_length = getattr(tokenizer, "model_max_length", MAX_LENGTH)
     dataset = load_dataset('json', data_files=file_path)
     train_dataset = dataset["train"]
     file_name = os.path.basename(file_path)
     dataset_name = os.path.splitext(file_name)[0]
 
     if other_dataset:
-        tokenized_dataset = train_dataset.map(process_other_data, fn_kwargs={'tokenizer': tokenizer}, num_proc=1, load_from_cache_file=False)
+        tokenized_dataset = train_dataset.map(
+            process_other_data,
+            fn_kwargs={"tokenizer": tokenizer},
+            num_proc=1,
+            load_from_cache_file=False,
+        )
     else:
-        tokenized_dataset = train_dataset.map(process, fn_kwargs={'tokenizer': tokenizer}, num_proc=1, load_from_cache_file=False)
+        tokenized_dataset = train_dataset.map(
+            process,
+            fn_kwargs={"tokenizer": tokenizer},
+            num_proc=1,
+            load_from_cache_file=False,
+        )
     print_function(next(iter(tokenized_dataset)), tokenizer)
     print(f"len of dataset before filter: {len(tokenized_dataset)}")
     
     filtered_dataset = []
     for item in tokenized_dataset:
-        if len(item["input_ids"]) <= 10000:
+        if len(item["input_ids"]) <= max_length:
             filtered_dataset.append(item)
     print(f"len of dataset after filter: {len(filtered_dataset)}")
     return filtered_dataset
@@ -186,7 +216,7 @@ def train():
         use_cache = False # use_cache与gradient_checkpointing不能同时设置为true
     model = AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
-        _attn_implementation="flash_attention_2",
+        _attn_implementation="sdpa",  # 注释掉，使用默认的 eager attention
         use_cache=use_cache, 
         #  save_only_model=True
     ).float()
@@ -214,7 +244,7 @@ def train():
     trainer = Trainer(
         model=model,
         args=training_args,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         data_collator=data_collator,
         train_dataset=dataset,
     )
