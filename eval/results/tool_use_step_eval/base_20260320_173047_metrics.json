@@ -1,0 +1,69 @@
+{
+  "overall": {
+    "num_samples": 100,
+    "format_validity": 0.0,
+    "schema_validity": 0.0,
+    "tool_family_accuracy": 0.01,
+    "tool_args_exact_match": 0.01,
+    "tool_args_soft_match": 0.0,
+    "stop_step_accuracy": 0.94
+  },
+  "per_tool": {
+    "repo_find_files": {
+      "num_samples": 12,
+      "format_validity": 0.0,
+      "schema_validity": 0.0,
+      "tool_family_accuracy": 0.0,
+      "tool_args_soft_match": 0.0
+    },
+    "repo_list_dir": {
+      "num_samples": 5,
+      "format_validity": 0.0,
+      "schema_validity": 0.0,
+      "tool_family_accuracy": 0.0,
+      "tool_args_soft_match": 0.0
+    },
+    "repo_search_text": {
+      "num_samples": 36,
+      "format_validity": 0.0,
+      "schema_validity": 0.0,
+      "tool_family_accuracy": 0.0,
+      "tool_args_soft_match": 0.0
+    },
+    "task_done": {
+      "num_samples": 6,
+      "format_validity": 0.0,
+      "schema_validity": 0.0,
+      "tool_family_accuracy": 0.0,
+      "tool_args_soft_match": 0.0
+    },
+    "repo_read_head": {
+      "num_samples": 6,
+      "format_validity": 0.0,
+      "schema_validity": 0.0,
+      "tool_family_accuracy": 0.0,
+      "tool_args_soft_match": 0.0
+    },
+    "repo_read_range": {
+      "num_samples": 33,
+      "format_validity": 0.0,
+      "schema_validity": 0.0,
+      "tool_family_accuracy": 0.0,
+      "tool_args_soft_match": 0.0
+    },
+    "repo_read_file": {
+      "num_samples": 1,
+      "format_validity": 0.0,
+      "schema_validity": 0.0,
+      "tool_family_accuracy": 0.0,
+      "tool_args_soft_match": 0.0
+    },
+    "null": {
+      "num_samples": 1,
+      "format_validity": 0.0,
+      "schema_validity": 0.0,
+      "tool_family_accuracy": 1.0,
+      "tool_args_soft_match": 0.0
+    }
+  }
+}
