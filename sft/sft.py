@@ -2,9 +2,11 @@ import os
 import copy
 import json
 import logging
+import math
 from tqdm import tqdm
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Sequence
+from pathlib import Path
 
 import torch
 from torch.utils.data import random_split
@@ -42,6 +44,7 @@ import shutil
 import matplotlib.pyplot as plt
 import numpy as np
 
+from eval.tool_use_step_eval import run_tool_use_eval
 from process_data.trajectory_coldstart.tool_schemas import (
     CANONICAL_TOOL_SCHEMAS,
     normalize_message_for_tool_template,
@@ -64,6 +67,9 @@ class DataArguments:
     data_path: str = field(
         default=None, metadata={"help": "Path to the training data."}
     )
+    eval_data_path: Optional[str] = field(
+        default=None, metadata={"help": "Path to the evaluation data."}
+    )
     prompt_type: Optional[str] = field(default="instruction")
     dailog_augmentation: Optional[bool] = field(default=False)
     other_type_data: Optional[str] = field(
@@ -84,6 +90,79 @@ class TrainingArguments(transformers.TrainingArguments):
             "help": "Maximum sequence length. Sequences will be right padded (and possibly truncated)."
         },
     )
+    tool_eval_max_samples: int = field(default=16)
+    tool_eval_max_new_tokens: int = field(default=384)
+    tool_eval_temperature: float = field(default=0.0)
+
+
+class ToolUseEvalCallback(transformers.TrainerCallback):
+    def __init__(
+        self,
+        *,
+        eval_data_path: str,
+        tokenizer,
+        max_samples: int,
+        max_new_tokens: int,
+        temperature: float,
+        output_dir: str,
+    ):
+        self.eval_data_path = eval_data_path
+        self.tokenizer = tokenizer
+        self.max_samples = max_samples
+        self.max_new_tokens = max_new_tokens
+        self.temperature = temperature
+        self.output_dir = output_dir
+        self.trainer = None
+
+    def on_epoch_end(self, args, state, control, model=None, **kwargs):
+        if model is None or self.tokenizer is None:
+            return control
+        if not self.eval_data_path or self.max_samples <= 0:
+            return control
+
+        epoch_value = state.epoch or 0.0
+        epoch_tag = f"epoch_{epoch_value:.2f}".replace(".", "_")
+        tool_eval_dir = Path(self.output_dir) / "tool_eval"
+        tool_eval_dir.mkdir(parents=True, exist_ok=True)
+        metrics_path = tool_eval_dir / f"{epoch_tag}_metrics.json"
+        results_path = tool_eval_dir / f"{epoch_tag}_results.jsonl"
+
+        model_was_training = model.training
+        model.eval()
+        try:
+            _, metrics = run_tool_use_eval(
+                data_path=self.eval_data_path,
+                model=model,
+                tokenizer=self.tokenizer,
+                max_samples=self.max_samples,
+                max_new_tokens=self.max_new_tokens,
+                temperature=self.temperature,
+                output_path=str(results_path),
+                metrics_path=str(metrics_path),
+            )
+            overall = metrics.get("overall", {})
+            log_metrics = {
+                "tool_eval/tool_family_accuracy": overall.get("tool_family_accuracy"),
+                "tool_eval/schema_validity": overall.get("schema_validity"),
+                "tool_eval/tool_args_soft_match": overall.get("tool_args_soft_match"),
+                "tool_eval/stop_step_accuracy": overall.get("stop_step_accuracy"),
+            }
+            log_metrics = {k: v for k, v in log_metrics.items() if v is not None}
+            print(f"[tool_eval] epoch={epoch_value:.2f} metrics={json.dumps(log_metrics, ensure_ascii=False)}")
+            if self.trainer is not None and log_metrics:
+                self.trainer.log(log_metrics)
+        except RuntimeError as exc:
+            error_path = tool_eval_dir / f"{epoch_tag}_error.txt"
+            error_path.write_text(str(exc) + "\n", encoding="utf-8")
+            print(f"[tool_eval] epoch={epoch_value:.2f} failed: {exc}")
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        finally:
+            if model_was_training:
+                model.train()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        return control
 
 
 def process_legacy(sample, tokenizer):
@@ -324,10 +403,15 @@ def train():
         tokenizer.pad_token = tokenizer.eos_token
 
     dataset = get_dataset(data_args.data_path, tokenizer, cache_dir=training_args.cache_dir)
+    eval_dataset = None
+    if data_args.eval_data_path:
+        eval_dataset = get_dataset(data_args.eval_data_path, tokenizer, cache_dir=training_args.cache_dir)
     if data_args.other_type_data:
         dataset_other = get_dataset(data_args.other_type_data, tokenizer, True, cache_dir=training_args.cache_dir)
         dataset = dataset + dataset_other
     print(f"dataset length: {len(dataset)}")
+    if eval_dataset is not None:
+        print(f"eval dataset length: {len(eval_dataset)}")
 
     data_collator = DataCollatorForSeq2Seq(
         tokenizer=tokenizer,
@@ -340,7 +424,19 @@ def train():
         processing_class=tokenizer,
         data_collator=data_collator,
         train_dataset=dataset,
+        eval_dataset=eval_dataset,
     )
+    if data_args.eval_data_path and training_args.tool_eval_max_samples > 0:
+        tool_eval_callback = ToolUseEvalCallback(
+            eval_data_path=data_args.eval_data_path,
+            tokenizer=tokenizer,
+            max_samples=training_args.tool_eval_max_samples,
+            max_new_tokens=training_args.tool_eval_max_new_tokens,
+            temperature=training_args.tool_eval_temperature,
+            output_dir=training_args.output_dir,
+        )
+        tool_eval_callback.trainer = trainer
+        trainer.add_callback(tool_eval_callback)
     trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
     trainer.save_model(training_args.output_dir)
     trainer.save_state()

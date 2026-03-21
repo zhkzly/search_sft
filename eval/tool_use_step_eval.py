@@ -312,12 +312,91 @@ def summarize(records: List[Dict]) -> Dict:
     return {"overall": metrics, "per_tool": per_tool_metrics}
 
 
+def evaluate_samples(
+    samples: List[Dict],
+    *,
+    model=None,
+    tokenizer=None,
+    max_new_tokens: int = 384,
+    temperature: float = 0.0,
+    use_gold_targets: bool = False,
+) -> Tuple[List[Dict], Dict]:
+    if not use_gold_targets and (model is None or tokenizer is None):
+        raise ValueError("model and tokenizer are required when use_gold_targets is False.")
+
+    records = []
+    for sample in samples:
+        if use_gold_targets:
+            gold = normalize_message_for_tool_template(sample["target_message"])
+            function = gold["tool_calls"][0]["function"] if gold.get("tool_calls") else {"name": None, "arguments": "{}"}
+            raw_prediction_text = (
+                (gold.get("content") or "").strip()
+                + ("\n\n" if gold.get("content") else "")
+                + "<tool_call>\n"
+                + json.dumps({"name": function["name"], "arguments": function["arguments"]}, ensure_ascii=False)
+                + "\n</tool_call>"
+            )
+            predicted_message, format_meta = parse_generated_tool_call(raw_prediction_text)
+        else:
+            raw_prediction_text = predict_with_model(
+                model,
+                tokenizer,
+                sample,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+            )
+            predicted_message, format_meta = parse_generated_tool_call(raw_prediction_text)
+
+        records.append(evaluate_prediction(sample, predicted_message, format_meta, raw_prediction_text))
+
+    metrics = summarize(records)
+    return records, metrics
+
+
+def run_tool_use_eval(
+    *,
+    data_path: str,
+    model=None,
+    tokenizer=None,
+    max_samples: Optional[int] = None,
+    max_new_tokens: int = 384,
+    temperature: float = 0.0,
+    use_gold_targets: bool = False,
+    output_path: Optional[str] = None,
+    metrics_path: Optional[str] = None,
+) -> Tuple[List[Dict], Dict]:
+    samples = list(iter_jsonl(data_path))
+    if max_samples is not None:
+        samples = samples[:max_samples]
+
+    records, metrics = evaluate_samples(
+        samples,
+        model=model,
+        tokenizer=tokenizer,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        use_gold_targets=use_gold_targets,
+    )
+
+    if output_path is not None:
+        output_path_obj = Path(output_path)
+        output_path_obj.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path_obj, "w", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record, ensure_ascii=False))
+                handle.write("\n")
+
+    if metrics_path is not None:
+        metrics_path_obj = Path(metrics_path)
+        metrics_path_obj.parent.mkdir(parents=True, exist_ok=True)
+        with open(metrics_path_obj, "w", encoding="utf-8") as handle:
+            json.dump(metrics, handle, ensure_ascii=False, indent=2)
+
+    return records, metrics
+
+
 def main() -> None:
     args = parse_args()
-    samples = list(iter_jsonl(args.data_path))
-    if args.max_samples is not None:
-        samples = samples[: args.max_samples]
-
     if not args.use_gold_targets and not args.model_name_or_path:
         raise ValueError("Either --use_gold_targets or --model_name_or_path must be provided.")
 
@@ -336,48 +415,21 @@ def main() -> None:
         if not torch.cuda.is_available():
             model = model.float()
 
-    records = []
-    for sample in samples:
-        if args.use_gold_targets:
-            gold = normalize_message_for_tool_template(sample["target_message"])
-            function = gold["tool_calls"][0]["function"] if gold.get("tool_calls") else {"name": None, "arguments": "{}"}
-            raw_prediction_text = (
-                (gold.get("content") or "").strip()
-                + ("\n\n" if gold.get("content") else "")
-                + "<tool_call>\n"
-                + json.dumps({"name": function["name"], "arguments": function["arguments"]}, ensure_ascii=False)
-                + "\n</tool_call>"
-            )
-            predicted_message, format_meta = parse_generated_tool_call(raw_prediction_text)
-        else:
-            assert model is not None and tokenizer is not None
-            raw_prediction_text = predict_with_model(
-                model,
-                tokenizer,
-                sample,
-                max_new_tokens=args.max_new_tokens,
-                temperature=args.temperature,
-            )
-            predicted_message, format_meta = parse_generated_tool_call(raw_prediction_text)
-
-        records.append(evaluate_prediction(sample, predicted_message, format_meta, raw_prediction_text))
-
-    output_path = Path(args.output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as handle:
-        for record in records:
-            handle.write(json.dumps(record, ensure_ascii=False))
-            handle.write("\n")
-
-    metrics = summarize(records)
-    metrics_path = Path(args.metrics_path)
-    metrics_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(metrics_path, "w", encoding="utf-8") as handle:
-        json.dump(metrics, handle, ensure_ascii=False, indent=2)
+    records, metrics = run_tool_use_eval(
+        data_path=args.data_path,
+        model=model,
+        tokenizer=tokenizer,
+        max_samples=args.max_samples,
+        max_new_tokens=args.max_new_tokens,
+        temperature=args.temperature,
+        use_gold_targets=args.use_gold_targets,
+        output_path=args.output_path,
+        metrics_path=args.metrics_path,
+    )
 
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
-    print(f"results_saved_to: {output_path}")
-    print(f"metrics_saved_to: {metrics_path}")
+    print(f"results_saved_to: {args.output_path}")
+    print(f"metrics_saved_to: {args.metrics_path}")
 
 
 if __name__ == "__main__":
