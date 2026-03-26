@@ -162,9 +162,9 @@ def print_stats(samples: List[Dict]) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build step-level raw pilot data from localization trajectories.")
+    parser = argparse.ArgumentParser(description="Build step-level raw data from localization trajectories.")
     parser.add_argument("--base_dir", default="classified_by_f1")
-    parser.add_argument("--output_path", default="sft/data/step_level_raw_pilot.jsonl")
+    parser.add_argument("--output_path", default="sft/data/step_level_raw.jsonl")
     parser.add_argument("--categories", default="2_medium_f1_50-100,3_perfect_match_100")
     parser.add_argument("--length_buckets", default="short_lt100k,medium_100k_300k")
     parser.add_argument("--max_trajectories", type=int, default=100)

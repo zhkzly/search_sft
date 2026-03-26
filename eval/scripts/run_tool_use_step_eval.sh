@@ -13,7 +13,7 @@ PYTHON_BIN="/data/zkl/miniconda3/envs/simpdsu/bin/python"
 MODE="${1:-gold}"
 MODEL_PATH="${2:-}"
 
-DATA_PATH="${DATA_PATH:-sft/data/step_level_compact_pilot_k2_state_on.jsonl}"
+DATA_PATH="${DATA_PATH:-sft/data/step_level_compact_k2_state_on_eval.jsonl}"
 TOKENIZER_NAME_OR_PATH="${TOKENIZER_NAME_OR_PATH:-Qwen/Qwen2.5-Coder-0.5B-Instruct}"
 BASE_MODEL_NAME_OR_PATH="${BASE_MODEL_NAME_OR_PATH:-Qwen/Qwen2.5-Coder-0.5B-Instruct}"
 MAX_SAMPLES="${MAX_SAMPLES:-100}"

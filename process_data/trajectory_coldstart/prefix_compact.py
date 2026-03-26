@@ -34,7 +34,7 @@ ERROR_PATTERNS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build compact prefix variants for step-level localization samples.")
-    parser.add_argument("--input_path", default="sft/data/step_level_raw_pilot.jsonl")
+    parser.add_argument("--input_path", default="sft/data/step_level_raw.jsonl")
     parser.add_argument("--output_path", required=True)
     parser.add_argument("--recent_pairs", type=int, default=2)
     parser.add_argument("--state_mode", choices=["on", "off"], default="on")

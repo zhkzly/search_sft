@@ -34,7 +34,7 @@ Therefore evaluation must be layered.
 
 Evaluation should be staged.
 
-For the current pilot stage, only the first two layers are mandatory:
+For the current current experiment stage, only the first two layers are mandatory:
 
 1. `Tool Call Correctness`
 2. `Tool Execution Quality`
@@ -92,7 +92,7 @@ For tool-use learning, "executable" is weaker than "useful".
 
 This layer evaluates the final localization result.
 
-For the current pilot stage, this layer is not the main gate.
+For the current current experiment stage, this layer is not the main gate.
 It should only be activated after the model already shows strong next-step tool behavior.
 
 ### What to measure
@@ -117,29 +117,29 @@ These should be reused as the reference signal for localization outcome evaluati
 
 ## Evaluation Datasets
 
-Evaluation should be run on pilot first.
+Evaluation should be run on initial experiment first.
 
 ### Recommended first evaluation data
 
-- compact pilot `K=2`
+- compact dataset `K=2`
 - optionally compare with `K=1` and `K=3`
 
 Candidate files:
 
-- [step_level_compact_pilot_k1_state_on.jsonl](/home/zkl/pycodes/research/search_sft_code/SimpleDeepSearcher/sft/data/step_level_compact_pilot_k1_state_on.jsonl)
-- [step_level_compact_pilot_k2_state_on.jsonl](/home/zkl/pycodes/research/search_sft_code/SimpleDeepSearcher/sft/data/step_level_compact_pilot_k2_state_on.jsonl)
-- [step_level_compact_pilot_k3_state_on.jsonl](/home/zkl/pycodes/research/search_sft_code/SimpleDeepSearcher/sft/data/step_level_compact_pilot_k3_state_on.jsonl)
+- [step_level_compact_k1_state_on.jsonl](/home/zkl/pycodes/research/search_sft_code/SimpleDeepSearcher/sft/data/step_level_compact_k1_state_on.jsonl)
+- [step_level_compact_k2_state_on.jsonl](/home/zkl/pycodes/research/search_sft_code/SimpleDeepSearcher/sft/data/step_level_compact_k2_state_on.jsonl)
+- [step_level_compact_k3_state_on.jsonl](/home/zkl/pycodes/research/search_sft_code/SimpleDeepSearcher/sft/data/step_level_compact_k3_state_on.jsonl)
 
 ### Recommended split
 
-Create a pilot held-out split with repository awareness.
+Create a repository-aware held-out split with repository awareness.
 
 Do not randomly mix steps from the same repository into train and eval.
 
 Suggested split:
 
-- train: majority of repositories in pilot
-- eval: held-out repositories inside pilot
+- train: majority of repositories in the current experiment set
+- eval: held-out repositories inside the current experiment split
 
 ## Comparison Baselines
 
@@ -275,9 +275,9 @@ This record should be saved per step for later analysis.
 
 This section defines what should be done now, in order.
 
-### Stage 0: Freeze the pilot eval split
+### Stage 0: Freeze the repository-aware eval split
 
-Before running any evaluation, create a repository-aware held-out split on the compact pilot set.
+Before running any evaluation, create a repository-aware held-out split on the compact dataset set.
 
 Required properties:
 
@@ -286,10 +286,10 @@ Required properties:
 
 Suggested artifacts:
 
-- `sft/data/compact_pilot_k2_train.jsonl`
-- `sft/data/compact_pilot_k2_eval.jsonl`
+- `sft/data/step_level_compact_k2_state_on_train.jsonl`
+- `sft/data/step_level_compact_k2_state_on_eval.jsonl`
 - optional:
-  - `sft/data/compact_pilot_k1_eval.jsonl`
+  - `sft/data/step_level_compact_k1_state_on_eval.jsonl`
 
 ### Stage 1: Evaluate the base model on the held-out split
 
@@ -309,7 +309,7 @@ Focus only on:
 - `tool_args_soft_match`
 - `stop_step_accuracy`
 
-### Stage 2: Train the pilot compact model
+### Stage 2: Train the compact model
 
 Use:
 
@@ -320,10 +320,10 @@ Current recommended default:
 
 - `compact_k2`
 
-This training run only needs to be a pilot run.
+This training run only needs to be a initial experiment run.
 It does not need to be long or expensive.
 
-### Stage 3: Re-run the same step-level eval on the trained pilot model
+### Stage 3: Re-run the same step-level eval on the trained compact model
 
 Compare directly against the base model.
 
@@ -349,9 +349,9 @@ Metrics to compute:
 - `execution_success_rate`
 - `useful_observation_rate`
 
-### Stage 5: Decide whether pilot training is effective
+### Stage 5: Decide whether compact training is effective
 
-At this stage, the pilot should be considered effective if:
+At this stage, the current experiment should be considered effective if:
 
 - `tool_family_accuracy` improves over base
 - `schema_validity` stays high
@@ -370,7 +370,7 @@ Only after stages 1-5 are satisfactory:
 - measure `task_done` timing
 - measure step efficiency
 
-This stage is useful, but it is not the first success criterion for the current pilot.
+This stage is useful, but it is not the first success criterion for the current experiment.
 
 ## Immediate Detailed To-Do
 
@@ -379,21 +379,21 @@ The next concrete implementation order should be:
 1. create a repo-aware eval split for `compact_k2`
 2. implement `eval/tool_use_step_eval.py`
 3. run the base model on the eval split
-4. train the compact pilot model
+4. train the compact dataset model
 5. run the trained model on the same eval split
 6. compare step-level tool-use metrics
 7. if promising, implement one-step execution evaluation
 
 ## Immediate Success Criteria
 
-For the current pilot stage, the minimum convincing result is:
+For the current current experiment stage, the minimum convincing result is:
 
 - higher `tool_family_accuracy`
 - non-trivial `tool_args_soft_match`
 - high `schema_validity`
 - acceptable `stop_step_accuracy`
 
-Notably, final file recall is not required yet to declare the pilot useful.
+Notably, final file recall is not required yet to declare the experiment useful.
 
 ## Recommended Evaluation Pipeline
 
@@ -435,7 +435,7 @@ Outputs:
 
 Input:
 
-- pilot repositories
+- experiment repositories
 - trained model
 
 Procedure:

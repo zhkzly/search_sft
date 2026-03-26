@@ -42,7 +42,7 @@ The correct order is:
 
 1. freeze compaction schema
 2. implement deterministic compactors
-3. generate compact pilot variants
+3. generate compact dataset variants
 4. inspect sample content manually
 5. compare retention and compactness metrics
 6. choose one `v0` compact format
@@ -239,25 +239,25 @@ Output:
 
 - compact sample with `message_format = compact_v0`
 
-## Phase 3: Generate compact pilot variants
+## Phase 3: Generate compact dataset variants
 
 Use as source:
 
-- [step_level_raw_pilot.jsonl](/home/zkl/pycodes/research/search_sft_code/SimpleDeepSearcher/sft/data/step_level_raw_pilot.jsonl)
+- [step_level_raw.jsonl](/home/zkl/pycodes/research/search_sft_code/SimpleDeepSearcher/sft/data/step_level_raw.jsonl)
 
 Generate:
 
-- `sft/data/step_level_compact_pilot_k1_state_on.jsonl`
-- `sft/data/step_level_compact_pilot_k2_state_on.jsonl`
-- `sft/data/step_level_compact_pilot_k3_state_on.jsonl`
+- `sft/data/step_level_compact_k1_state_on.jsonl`
+- `sft/data/step_level_compact_k2_state_on.jsonl`
+- `sft/data/step_level_compact_k3_state_on.jsonl`
 - optional:
-  - `sft/data/step_level_compact_pilot_k2_state_off.jsonl`
+  - `sft/data/step_level_compact_k2_state_off.jsonl`
 
 For each variant also generate a human-readable preview:
 
-- `sft/data/step_level_compact_pilot_k1_examples.json`
-- `sft/data/step_level_compact_pilot_k2_examples.json`
-- `sft/data/step_level_compact_pilot_k3_examples.json`
+- `sft/data/step_level_compact_k1_examples.json`
+- `sft/data/step_level_compact_k2_examples.json`
+- `sft/data/step_level_compact_k3_examples.json`
 
 ## Phase 4: Quantitative inspection
 
@@ -276,7 +276,7 @@ For each compact variant, compute:
 
 This should be saved in a short report file, for example:
 
-- `docs/plans/2026-03-20-prefix-compact-pilot-report-ai-generated.md`
+- `docs/plans/2026-03-20-prefix-compact-report-ai-generated.md`
 
 ## Phase 5: Qualitative inspection
 
@@ -356,5 +356,5 @@ The next concrete implementation step should be:
 
 1. create `prefix_compact.py`
 2. implement `K=1/2/3` variants
-3. save compact pilot files and example previews
+3. save compact intermediate data files and example previews
 4. compare them before touching the trainer

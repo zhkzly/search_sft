@@ -808,7 +808,7 @@ It should support the trained policy, not replace it.
 The correct execution order is:
 
 1. freeze evaluation protocol first
-2. run a small pilot data pipeline
+2. run a small initial data pipeline
 3. inspect and refine the sample schema
 4. process the full dataset
 5. adapt the training pipeline
@@ -835,7 +835,7 @@ Required outputs:
 - a repo-heldout split file
 - a metric definition file or a short markdown spec
 
-### Phase 2: Build a pilot dataset, not the full dataset
+### Phase 2: Build a initial dataset slice, not the full dataset
 
 Start with a small subset, for example:
 
@@ -849,12 +849,12 @@ Why:
 - canonicalization rules will almost certainly need debugging
 - target masking bugs are easier to catch on a small set
 
-Pilot output files:
+Initial output files:
 
-- `step_level_raw_pilot.jsonl`
-- `step_level_canonical_pilot.jsonl`
+- `step_level_raw.jsonl`
+- `step_level_canonical_v0.jsonl`
 
-Pilot audit:
+Dataset audit:
 
 - step count
 - tool-family count
@@ -887,7 +887,7 @@ Why not default to long reasoning:
 
 ### Phase 4: Full data processing
 
-After the pilot format is stable:
+After the intermediate format is stable:
 
 - process all `perfect` and `medium`
 - still keep only `short` and `medium` first
@@ -971,7 +971,7 @@ It is written as a design decision record, not as final code.
 The point of `prefix_compact` is not generic long-context management.
 It is a task-specific transformation for tool-use supervision.
 
-The actual problem observed in the pilot is:
+The actual problem observed in the early experiment is:
 
 - current-step target commands are mostly parseable
 - strict sample retention collapses mainly because older prefix history is too noisy or not canonicalizable
@@ -998,7 +998,7 @@ So full-prefix training currently optimizes for transcript fidelity more than to
 
 `K=2` is a default, not a theorem.
 
-It was proposed because pilot retention experiments showed:
+It was proposed because early retention experiments showed:
 
 - full prefix: about 45%
 - recent 1 pair: about 77%
@@ -1394,7 +1394,7 @@ For small models, the extra thought tokens may hurt more than help.
 
 Consequence:
 
-- compare `action-only` and `short-thought + action` in the pilot
+- compare `action-only` and `short-thought + action` in the early experiment
 
 ### Assumption 4: trajectory-level quality means step-level quality
 

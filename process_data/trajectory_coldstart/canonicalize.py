@@ -470,8 +470,8 @@ def print_stats(kept_samples: List[Dict], counters: Counter) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Map raw step-level bash samples into canonical localization tools.")
-    parser.add_argument("--input_path", default="sft/data/step_level_raw_pilot.jsonl")
-    parser.add_argument("--output_path", default="sft/data/step_level_canonical_pilot.jsonl")
+    parser.add_argument("--input_path", default="sft/data/step_level_raw.jsonl")
+    parser.add_argument("--output_path", default="sft/data/step_level_canonical_v0.jsonl")
     parser.add_argument("--require_mapped_prefix", action="store_true")
     return parser.parse_args()
 

@@ -14,13 +14,13 @@ export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:T
 lr="${LR:-2e-5}"
 base="${BASE_MODEL_NAME_OR_PATH:-Qwen/Qwen2.5-Coder-0.5B-Instruct}"
 tokenizer="${TOKENIZER_NAME_OR_PATH:-Qwen/Qwen2.5-Coder-0.5B-Instruct}"
-train_data="${TRAIN_DATA:-sft/data/step_level_compact_pilot_k2_state_on_train.jsonl}"
-eval_data="${EVAL_DATA:-sft/data/step_level_compact_pilot_k2_state_on_eval.jsonl}"
+train_data="${TRAIN_DATA:-sft/data/step_level_compact_k2_state_on_train.jsonl}"
+eval_data="${EVAL_DATA:-sft/data/step_level_compact_k2_state_on_eval.jsonl}"
 bsz="${PER_DEVICE_BATCH_SIZE:-1}"
 acc="${GRAD_ACC_STEPS:-8}"
 epochs="${NUM_TRAIN_EPOCHS:-1}"
 max_len="${MODEL_MAX_LENGTH:-4096}"
-job_name="${JOB_NAME:-qwen2.5-coder-0.5b-compact-pilot-k2}"
+job_name="${JOB_NAME:-qwen2.5-coder-0.5b-compact-k2}"
 tool_eval_max_samples="${TOOL_EVAL_MAX_SAMPLES:-16}"
 tool_eval_max_new_tokens="${TOOL_EVAL_MAX_NEW_TOKENS:-384}"
 tool_eval_temperature="${TOOL_EVAL_TEMPERATURE:-0.0}"
@@ -68,4 +68,4 @@ echo "=========================================="
     --tool_eval_temperature "${tool_eval_temperature}" \
     --bf16
 
-echo "Pilot training completed! Model saved to: ${output_dir}"
+echo "Training completed! Model saved to: ${output_dir}"

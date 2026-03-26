@@ -1,11 +1,11 @@
 • 可以。我分两部分讲：
 
-  1. step_level_pilot_examples.json 这个文件本身是什么，怎么来的
+  1. step_level_examples_preview.json 这个文件本身是什么，怎么来的
   2. 当前几个轨迹处理函数分别在干什么，每一步怎么把原始 trajectory.json 变成你看到的内容
 
   先给一个最重要的提醒：
 
-  step_level_pilot_examples.json 不是由仓库里的一个正式脚本生成的，而是我为了让你人工检查中间结果，用一次性脚本从两个 pilot 文件里抽样生成的。
+  step_level_examples_preview.json 不是由仓库里的一个正式脚本生成的，而是我为了让你人工检查中间结果，用一次性脚本从两个 中间实验文件里抽样生成的。
   正式处理链路还是：
 
   - process_data/trajectory_coldstart/stepify.py
@@ -16,7 +16,7 @@
   一、这个文件到底是什么
   文件在这里：
 
-  - sft/data/step_level_pilot_examples.json
+  - sft/data/step_level_examples_preview.json
 
   它不是统计摘要，而是一个“中间样本展示集”。
 
@@ -40,18 +40,18 @@
   二、它是从哪些文件来的
   顶层字段 source_files 已经写了来源：
 
-  - sft/data/step_level_raw_pilot.jsonl
-  - sft/data/step_level_canonical_pilot_v0.jsonl
+  - sft/data/step_level_raw.jsonl
+  - sft/data/step_level_canonical_v0.jsonl
 
   也就是说：
 
-  - 先从原始轨迹做出 raw pilot
-  - 再从 raw pilot 做出 canonical pilot
-  - 再从这两个 pilot 里抽代表样本，生成 step_level_pilot_examples.json
+  - 先从原始轨迹做出 raw 中间样本
+  - 再从 raw 中间样本 做出 canonical 中间样本
+  - 再从这两个 中间实验样本里抽代表样本，生成 step_level_examples_preview.json
 
   ———
 
-  三、先解释 raw pilot 是怎么从原始轨迹来的
+  三、先解释 raw 中间样本 是怎么从原始轨迹来的
   核心函数在：
 
   - process_data/trajectory_coldstart/stepify.py:82
@@ -75,7 +75,7 @@
   - process_data/trajectory_coldstart/common.py:8
   - process_data/trajectory_coldstart/common.py:9
 
-  所以 raw pilot 不是全量原始数据，而是先经过“按质量桶和长度桶筛选”的。
+  所以 raw 中间样本 不是全量原始数据，而是先经过“按质量桶和长度桶筛选”的。
 
   ———
 
@@ -185,7 +185,7 @@
   - 如果有 tool call 但不是 task_done -> action_step
   - 如果没有 tool call -> thought_step
 
-  所以你在 step_level_pilot_examples.json 里看到的：
+  所以你在 step_level_examples_preview.json 里看到的：
 
   - raw_action_start
   - raw_action_mid
@@ -250,7 +250,7 @@
 
   ———
 
-  五、canonical pilot 是怎么从 raw pilot 来的
+  五、canonical 中间样本 是怎么从 raw 中间样本 来的
   核心函数在：
 
   - process_data/trajectory_coldstart/canonicalize.py:429
@@ -440,12 +440,12 @@
 
   ———
 
-  七、step_level_pilot_examples.json 里的 dropped_examples 是怎么来的
+  七、step_level_examples_preview.json 里的 dropped_examples 是怎么来的
   这个不是某个现成函数自动产出的，而是我额外跑了一段脚本做的：
 
   逻辑是：
 
-  1. 遍历 raw pilot 里的每一条 sample
+  1. 遍历 raw 中间实验样本里的每一条 sample
   2. 调一次：
       - canonicalize_sample(sample, require_mapped_prefix=True)
   3. 如果返回 None
