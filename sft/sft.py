@@ -117,6 +117,8 @@ class ToolUseEvalCallback(transformers.TrainerCallback):
     def on_epoch_end(self, args, state, control, model=None, **kwargs):
         if model is None or self.tokenizer is None:
             return control
+        if not getattr(state, "is_world_process_zero", True):
+            return control
         if not self.eval_data_path or self.max_samples <= 0:
             return control
 
@@ -139,6 +141,8 @@ class ToolUseEvalCallback(transformers.TrainerCallback):
                 temperature=self.temperature,
                 output_path=str(results_path),
                 metrics_path=str(metrics_path),
+                show_progress=True,
+                progress_desc=f"tool_eval epoch={epoch_value:.2f}",
             )
             overall = metrics.get("overall", {})
             log_metrics = {

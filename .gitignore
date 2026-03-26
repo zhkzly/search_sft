@@ -221,3 +221,4 @@ logs/*
 classified_by_f1
 sft/data/*
 trae_config_480b_20260122_174635
+eval

@@ -2,12 +2,15 @@ import argparse
 import copy
 import importlib.util as _importlib_util
 import json
+import os
 import re
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import torch
+from tqdm.auto import tqdm
 
 _real_find_spec = _importlib_util.find_spec
 
@@ -60,6 +63,16 @@ def iter_jsonl(path: str) -> Iterable[Dict]:
                 yield json.loads(line)
 
 
+def is_main_process_from_env() -> bool:
+    rank = os.environ.get("RANK")
+    if rank is not None:
+        return int(rank) == 0
+    local_rank = os.environ.get("LOCAL_RANK")
+    if local_rank is not None:
+        return int(local_rank) == 0
+    return True
+
+
 def build_compact_prefix_messages(sample: Dict) -> List[Dict]:
     task_block = sample["task_block"]
     state_block = sample["state_block"]
@@ -86,6 +99,33 @@ def render_prefix(tokenizer, sample: Dict) -> str:
     )
 
 
+def _coerce_tool_args(raw_args) -> Tuple[Optional[Dict], Optional[str]]:
+    if isinstance(raw_args, str):
+        try:
+            return json.loads(raw_args), None
+        except json.JSONDecodeError:
+            return None, "invalid_arguments_json"
+    if isinstance(raw_args, dict):
+        return raw_args, None
+    return None, "arguments_not_object_or_string"
+
+
+def _build_parsed_tool_message(content: str, tool_name: Optional[str], tool_args: Dict) -> Dict:
+    return {
+        "role": "assistant",
+        "content": content.strip(),
+        "tool_calls": [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "arguments": tool_args,
+                }
+            }
+        ],
+    }
+
+
 def parse_generated_tool_call(text: str) -> Tuple[Optional[Dict], Dict]:
     content = text.strip()
     matches = TOOL_CALL_BLOCK_RE.findall(content)
@@ -100,32 +140,54 @@ def parse_generated_tool_call(text: str) -> Tuple[Optional[Dict], Dict]:
 
     tool_name = parsed.get("name")
     raw_args = parsed.get("arguments", {})
-    if isinstance(raw_args, str):
-        try:
-            tool_args = json.loads(raw_args)
-        except json.JSONDecodeError:
-            return None, {"format_validity": False, "reason": "invalid_arguments_json"}
-    elif isinstance(raw_args, dict):
-        tool_args = raw_args
-    else:
-        return None, {"format_validity": False, "reason": "arguments_not_object_or_string"}
+    tool_args, error_reason = _coerce_tool_args(raw_args)
+    if error_reason is not None:
+        return None, {"format_validity": False, "reason": error_reason}
 
     return (
-        {
-            "role": "assistant",
-            "content": content.split("<tool_call>", 1)[0].strip(),
-            "tool_calls": [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": tool_args,
-                    }
-                }
-            ],
-        },
+        _build_parsed_tool_message(
+            content=content.split("<tool_call>", 1)[0],
+            tool_name=tool_name,
+            tool_args=tool_args,
+        ),
         {"format_validity": True, "reason": "parsed"},
     )
+
+
+def parse_generated_bare_json_tool_call(text: str) -> Tuple[Optional[Dict], Dict]:
+    content = text.strip()
+    if "<tool_call>" in content:
+        return None, {"format_validity": False, "reason": "wrapped_tool_call_present"}
+
+    decoder = json.JSONDecoder()
+    for start_idx, ch in enumerate(content):
+        if ch != "{":
+            continue
+        try:
+            parsed, end_idx = decoder.raw_decode(content, start_idx)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        if "name" not in parsed or "arguments" not in parsed:
+            continue
+        tool_args, error_reason = _coerce_tool_args(parsed.get("arguments", {}))
+        if error_reason is not None:
+            return None, {"format_validity": False, "reason": error_reason}
+        prefix_content = content[:start_idx].strip()
+        suffix_content = content[end_idx:].strip()
+        if suffix_content:
+            prefix_content = (prefix_content + "\n" + suffix_content).strip() if prefix_content else suffix_content
+        return (
+            _build_parsed_tool_message(
+                content=prefix_content,
+                tool_name=parsed.get("name"),
+                tool_args=tool_args,
+            ),
+            {"format_validity": True, "reason": "parsed"},
+        )
+
+    return None, {"format_validity": False, "reason": "missing_bare_json_tool_call"}
 
 
 def validate_schema(tool_name: Optional[str], args: Dict) -> Tuple[bool, str]:
@@ -232,7 +294,13 @@ def predict_with_model(model, tokenizer, sample: Dict, max_new_tokens: int, temp
     return tokenizer.decode(new_tokens, skip_special_tokens=False)
 
 
-def evaluate_prediction(sample: Dict, predicted_message: Optional[Dict], format_meta: Dict, raw_prediction_text: str) -> Dict:
+def build_variant_record(
+    *,
+    sample: Dict,
+    predicted_message: Optional[Dict],
+    format_meta: Dict,
+    prefix: str,
+) -> Dict:
     gold = make_gold_record(sample)
     pred_tool_name = None
     pred_tool_args = {}
@@ -256,28 +324,78 @@ def evaluate_prediction(sample: Dict, predicted_message: Optional[Dict], format_
     stop_step_accuracy = pred_is_stop == gold_is_stop
 
     return {
+        f"{prefix}_pred_tool_name": pred_tool_name,
+        f"{prefix}_pred_tool_args": pred_tool_args,
+        f"{prefix}_format_validity": format_validity,
+        f"{prefix}_format_reason": format_meta.get("reason"),
+        f"{prefix}_schema_validity": schema_validity,
+        f"{prefix}_schema_reason": schema_reason,
+        f"{prefix}_tool_family_correct": tool_family_correct,
+        f"{prefix}_tool_args_exact_match": exact_args,
+        f"{prefix}_tool_args_soft_match": soft_args,
+        f"{prefix}_pred_is_stop": pred_is_stop,
+        f"{prefix}_stop_step_accuracy": stop_step_accuracy,
+    }
+
+
+def evaluate_prediction(
+    sample: Dict,
+    strict_message: Optional[Dict],
+    strict_meta: Dict,
+    bare_message: Optional[Dict],
+    bare_meta: Dict,
+    raw_prediction_text: str,
+) -> Dict:
+    gold = make_gold_record(sample)
+    relaxed_message = strict_message if strict_meta.get("format_validity", False) else bare_message
+    relaxed_meta = strict_meta if strict_meta.get("format_validity", False) else bare_meta
+
+    strict_record = build_variant_record(
+        sample=sample,
+        predicted_message=strict_message,
+        format_meta=strict_meta,
+        prefix="strict",
+    )
+    bare_record = build_variant_record(
+        sample=sample,
+        predicted_message=bare_message,
+        format_meta=bare_meta,
+        prefix="bare_json",
+    )
+    relaxed_record = build_variant_record(
+        sample=sample,
+        predicted_message=relaxed_message,
+        format_meta=relaxed_meta,
+        prefix="relaxed",
+    )
+
+    return {
         "sample_id": sample["sample_id"],
         "repo": sample["repo"],
         "target_kind": sample["target_kind"],
         "gold_tool_name": gold["tool_name"],
         "gold_tool_args": gold["tool_args"],
-        "pred_tool_name": pred_tool_name,
-        "pred_tool_args": pred_tool_args,
         "raw_prediction_text": raw_prediction_text,
-        "format_validity": format_validity,
-        "format_reason": format_meta.get("reason"),
-        "schema_validity": schema_validity,
-        "schema_reason": schema_reason,
-        "tool_family_correct": tool_family_correct,
-        "tool_args_exact_match": exact_args,
-        "tool_args_soft_match": soft_args,
-        "gold_is_stop": gold_is_stop,
-        "pred_is_stop": pred_is_stop,
-        "stop_step_accuracy": stop_step_accuracy,
+        # Backward-compatible aliases: keep old top-level fields mapped to strict metrics.
+        "pred_tool_name": strict_record["strict_pred_tool_name"],
+        "pred_tool_args": strict_record["strict_pred_tool_args"],
+        "format_validity": strict_record["strict_format_validity"],
+        "format_reason": strict_record["strict_format_reason"],
+        "schema_validity": strict_record["strict_schema_validity"],
+        "schema_reason": strict_record["strict_schema_reason"],
+        "tool_family_correct": strict_record["strict_tool_family_correct"],
+        "tool_args_exact_match": strict_record["strict_tool_args_exact_match"],
+        "tool_args_soft_match": strict_record["strict_tool_args_soft_match"],
+        "gold_is_stop": sample["target_kind"] == "stop_step",
+        "pred_is_stop": strict_record["strict_pred_is_stop"],
+        "stop_step_accuracy": strict_record["strict_stop_step_accuracy"],
+        **strict_record,
+        **bare_record,
+        **relaxed_record,
     }
 
 
-def summarize(records: List[Dict]) -> Dict:
+def summarize_variant(records: List[Dict], prefix: str) -> Dict:
     metrics = {}
     total = len(records)
     if total == 0:
@@ -287,12 +405,12 @@ def summarize(records: List[Dict]) -> Dict:
         return sum(1 for record in records if record.get(field)) / total
 
     metrics["num_samples"] = total
-    metrics["format_validity"] = avg("format_validity")
-    metrics["schema_validity"] = avg("schema_validity")
-    metrics["tool_family_accuracy"] = avg("tool_family_correct")
-    metrics["tool_args_exact_match"] = avg("tool_args_exact_match")
-    metrics["tool_args_soft_match"] = avg("tool_args_soft_match")
-    metrics["stop_step_accuracy"] = avg("stop_step_accuracy")
+    metrics["format_validity"] = avg(f"{prefix}_format_validity")
+    metrics["schema_validity"] = avg(f"{prefix}_schema_validity")
+    metrics["tool_family_accuracy"] = avg(f"{prefix}_tool_family_correct")
+    metrics["tool_args_exact_match"] = avg(f"{prefix}_tool_args_exact_match")
+    metrics["tool_args_soft_match"] = avg(f"{prefix}_tool_args_soft_match")
+    metrics["stop_step_accuracy"] = avg(f"{prefix}_stop_step_accuracy")
 
     per_tool = defaultdict(list)
     for record in records:
@@ -303,13 +421,30 @@ def summarize(records: List[Dict]) -> Dict:
         n = len(tool_records)
         per_tool_metrics[tool_name] = {
             "num_samples": n,
-            "format_validity": sum(1 for x in tool_records if x["format_validity"]) / n,
-            "schema_validity": sum(1 for x in tool_records if x["schema_validity"]) / n,
-            "tool_family_accuracy": sum(1 for x in tool_records if x["tool_family_correct"]) / n,
-            "tool_args_soft_match": sum(1 for x in tool_records if x["tool_args_soft_match"]) / n,
+            "format_validity": sum(1 for x in tool_records if x[f"{prefix}_format_validity"]) / n,
+            "schema_validity": sum(1 for x in tool_records if x[f"{prefix}_schema_validity"]) / n,
+            "tool_family_accuracy": sum(1 for x in tool_records if x[f"{prefix}_tool_family_correct"]) / n,
+            "tool_args_soft_match": sum(1 for x in tool_records if x[f"{prefix}_tool_args_soft_match"]) / n,
         }
 
     return {"overall": metrics, "per_tool": per_tool_metrics}
+
+
+def summarize(records: List[Dict]) -> Dict:
+    strict_metrics = summarize_variant(records, prefix="strict")
+    bare_metrics = summarize_variant(records, prefix="bare_json")
+    relaxed_metrics = summarize_variant(records, prefix="relaxed")
+    return {
+        # Backward-compatible aliases: keep old top-level overall/per_tool mapped to strict metrics.
+        "overall": strict_metrics["overall"],
+        "per_tool": strict_metrics["per_tool"],
+        "overall_strict": strict_metrics["overall"],
+        "per_tool_strict": strict_metrics["per_tool"],
+        "overall_bare_json": bare_metrics["overall"],
+        "per_tool_bare_json": bare_metrics["per_tool"],
+        "overall_relaxed": relaxed_metrics["overall"],
+        "per_tool_relaxed": relaxed_metrics["per_tool"],
+    }
 
 
 def evaluate_samples(
@@ -320,12 +455,21 @@ def evaluate_samples(
     max_new_tokens: int = 384,
     temperature: float = 0.0,
     use_gold_targets: bool = False,
+    show_progress: bool = False,
+    progress_desc: str = "tool_eval",
 ) -> Tuple[List[Dict], Dict]:
     if not use_gold_targets and (model is None or tokenizer is None):
         raise ValueError("model and tokenizer are required when use_gold_targets is False.")
 
     records = []
-    for sample in samples:
+    progress_bar = tqdm(
+        samples,
+        total=len(samples),
+        desc=progress_desc,
+        dynamic_ncols=True,
+        disable=not (show_progress and sys.stderr.isatty()),
+    )
+    for sample in progress_bar:
         if use_gold_targets:
             gold = normalize_message_for_tool_template(sample["target_message"])
             function = gold["tool_calls"][0]["function"] if gold.get("tool_calls") else {"name": None, "arguments": "{}"}
@@ -336,7 +480,8 @@ def evaluate_samples(
                 + json.dumps({"name": function["name"], "arguments": function["arguments"]}, ensure_ascii=False)
                 + "\n</tool_call>"
             )
-            predicted_message, format_meta = parse_generated_tool_call(raw_prediction_text)
+            strict_message, strict_meta = parse_generated_tool_call(raw_prediction_text)
+            bare_message, bare_meta = parse_generated_bare_json_tool_call(raw_prediction_text)
         else:
             raw_prediction_text = predict_with_model(
                 model,
@@ -345,9 +490,19 @@ def evaluate_samples(
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
             )
-            predicted_message, format_meta = parse_generated_tool_call(raw_prediction_text)
+            strict_message, strict_meta = parse_generated_tool_call(raw_prediction_text)
+            bare_message, bare_meta = parse_generated_bare_json_tool_call(raw_prediction_text)
 
-        records.append(evaluate_prediction(sample, predicted_message, format_meta, raw_prediction_text))
+        records.append(
+            evaluate_prediction(
+                sample,
+                strict_message,
+                strict_meta,
+                bare_message,
+                bare_meta,
+                raw_prediction_text,
+            )
+        )
 
     metrics = summarize(records)
     return records, metrics
@@ -364,6 +519,8 @@ def run_tool_use_eval(
     use_gold_targets: bool = False,
     output_path: Optional[str] = None,
     metrics_path: Optional[str] = None,
+    show_progress: bool = False,
+    progress_desc: str = "tool_eval",
 ) -> Tuple[List[Dict], Dict]:
     samples = list(iter_jsonl(data_path))
     if max_samples is not None:
@@ -376,6 +533,8 @@ def run_tool_use_eval(
         max_new_tokens=max_new_tokens,
         temperature=temperature,
         use_gold_targets=use_gold_targets,
+        show_progress=show_progress,
+        progress_desc=progress_desc,
     )
 
     if output_path is not None:
@@ -425,6 +584,8 @@ def main() -> None:
         use_gold_targets=args.use_gold_targets,
         output_path=args.output_path,
         metrics_path=args.metrics_path,
+        show_progress=is_main_process_from_env(),
+        progress_desc="tool_eval",
     )
 
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
