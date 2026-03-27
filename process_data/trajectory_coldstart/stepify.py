@@ -82,11 +82,12 @@ def extract_raw_command_metadata(assistant_message: Dict) -> Dict:
 def build_samples(args: argparse.Namespace) -> List[Dict]:
     categories = parse_csv_arg(args.categories, DEFAULT_CATEGORIES)
     length_buckets = parse_csv_arg(args.length_buckets, DEFAULT_LENGTH_BUCKETS)
+    max_trajectories = args.max_trajectories if args.max_trajectories and args.max_trajectories > 0 else None
     trajectory_files = collect_trajectory_files(
         base_dir=args.base_dir,
         categories=categories,
         length_buckets=length_buckets,
-        max_trajectories=args.max_trajectories,
+        max_trajectories=max_trajectories,
         shuffle=args.shuffle,
         seed=args.seed,
     )
@@ -167,7 +168,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_path", default="sft/data/step_level_raw.jsonl")
     parser.add_argument("--categories", default="2_medium_f1_50-100,3_perfect_match_100")
     parser.add_argument("--length_buckets", default="short_lt100k,medium_100k_300k")
-    parser.add_argument("--max_trajectories", type=int, default=100)
+    parser.add_argument(
+        "--max_trajectories",
+        type=int,
+        default=0,
+        help="Maximum number of trajectories to use. Set to 0 or a negative value to use all matching trajectories.",
+    )
     parser.add_argument("--shuffle", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()

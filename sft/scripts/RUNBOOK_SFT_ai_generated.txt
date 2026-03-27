@@ -1,0 +1,161 @@
+SimpleDeepSearcher SFT Runbook (AI-Generated)
+
+Purpose
+- This file is the single place to copy commands from.
+- For the current project state, the recommended formal SFT experiment is:
+  compact step-level data, k=2, state_mode=on, Qwen2.5-Coder-0.5B-Instruct.
+
+Current script map under sft/scripts
+
+Recommended now
+- sft/scripts/run_formal_sft_compact_k2.sh
+  Canonical wrapper entrypoint for the current formal SFT run.
+
+Current formal compact trainer
+- sft/scripts/train_qwen_0.5b_compact_k2.sh
+  Uses:
+  - sft/data/step_level_compact_k2_state_on_train.jsonl
+  - sft/data/step_level_compact_k2_state_on_eval.jsonl
+
+Legacy/trajectory trainers
+- sft/scripts/legacy/train_qwen_0.6b.sh
+- sft/scripts/legacy/train_qwen_1.5b.sh
+- sft/scripts/legacy/train_qwen_1.5b_single_gpu.sh
+- sft/scripts/legacy/train_qwen_1.5b_accelerate_2gpu.sh
+- sft/scripts/legacy/train_qwen_1.5b_fsdp_2gpu.sh
+- sft/scripts/legacy/train_qwen_7b_deepspeed.sh
+- sft/scripts/legacy/train_qwen_7b_fsdp.sh
+- sft/scripts/legacy/train_qwen_7b_fsdp_offload.sh
+
+Recommendation
+- Ignore the scripts under `sft/scripts/legacy/` unless you explicitly want long-trajectory SFT.
+- For the current compact step-level experiment, use only:
+  - sft/scripts/run_formal_sft_compact_k2.sh
+
+What stays in sft/scripts root
+- RUNBOOK_SFT_ai_generated.txt
+- run_formal_sft_compact_k2.sh
+- train_qwen_0.5b_compact_k2.sh
+
+What lives under sft/scripts/legacy
+- all old trajectory/legacy training launchers
+
+Step 0. Go to project root
+```bash
+cd /home/zkl/pycodes/research/search_sft_code/SimpleDeepSearcher
+```
+
+Step 1. Confirm the formal dataset exists
+```bash
+ls -1 sft/data/step_level_compact_k2_state_on_train.jsonl
+ls -1 sft/data/step_level_compact_k2_state_on_eval.jsonl
+ls -1 sft/data/step_level_compact_k2_state_on_test.jsonl
+```
+
+Step 2. Recommended formal training command
+```bash
+cd /home/zkl/pycodes/research/search_sft_code/SimpleDeepSearcher
+
+export CUDA_VISIBLE_DEVICES=0
+export BASE_MODEL_NAME_OR_PATH=Qwen/Qwen2.5-Coder-0.5B-Instruct
+export TOKENIZER_NAME_OR_PATH=Qwen/Qwen2.5-Coder-0.5B-Instruct
+export MODEL_MAX_LENGTH=4096
+export PER_DEVICE_BATCH_SIZE=1
+export GRAD_ACC_STEPS=8
+export NUM_TRAIN_EPOCHS=1
+export LR=2e-5
+export JOB_NAME=qwen2.5-coder-0.5b-compact-k2-formal
+
+bash sft/scripts/run_formal_sft_compact_k2.sh
+```
+
+Step 3. If you want to train with a local cached model path
+```bash
+cd /home/zkl/pycodes/research/search_sft_code/SimpleDeepSearcher
+
+export CUDA_VISIBLE_DEVICES=0
+export BASE_MODEL_NAME_OR_PATH=/home/zkl/.cache/huggingface/hub/models--Qwen--Qwen2.5-Coder-0.5B-Instruct/snapshots/ea3f2471cf1b1f0db85067f1ef93848e38e88c25
+export TOKENIZER_NAME_OR_PATH=$BASE_MODEL_NAME_OR_PATH
+export MODEL_MAX_LENGTH=4096
+export PER_DEVICE_BATCH_SIZE=1
+export GRAD_ACC_STEPS=8
+export NUM_TRAIN_EPOCHS=1
+export LR=2e-5
+export JOB_NAME=qwen2.5-coder-0.5b-compact-k2-formal-local
+
+bash sft/scripts/run_formal_sft_compact_k2.sh
+```
+
+Step 4. Override train/eval data paths if needed
+```bash
+cd /home/zkl/pycodes/research/search_sft_code/SimpleDeepSearcher
+
+export TRAIN_DATA=sft/data/step_level_compact_k2_state_on_train.jsonl
+export EVAL_DATA=sft/data/step_level_compact_k2_state_on_eval.jsonl
+
+bash sft/scripts/run_formal_sft_compact_k2.sh
+```
+
+Step 5. Evaluate the base model on the formal eval split
+```bash
+cd /home/zkl/pycodes/research/search_sft_code/SimpleDeepSearcher
+
+export CUDA_VISIBLE_DEVICES=0
+export HF_HUB_OFFLINE=1
+export BASE_MODEL_NAME_OR_PATH=/home/zkl/.cache/huggingface/hub/models--Qwen--Qwen2.5-Coder-0.5B-Instruct/snapshots/ea3f2471cf1b1f0db85067f1ef93848e38e88c25
+export TOKENIZER_NAME_OR_PATH=$BASE_MODEL_NAME_OR_PATH
+export DATA_PATH=sft/data/step_level_compact_k2_state_on_eval.jsonl
+export MAX_SAMPLES=78
+export RUN_NAME=base_formal_eval_k2
+
+bash eval/scripts/run_tool_use_step_eval.sh base
+```
+
+Step 6. Evaluate a trained checkpoint on the formal eval split
+```bash
+cd /home/zkl/pycodes/research/search_sft_code/SimpleDeepSearcher
+
+export CUDA_VISIBLE_DEVICES=0
+export HF_HUB_OFFLINE=1
+export TOKENIZER_NAME_OR_PATH=/home/zkl/.cache/huggingface/hub/models--Qwen--Qwen2.5-Coder-0.5B-Instruct/snapshots/ea3f2471cf1b1f0db85067f1ef93848e38e88c25
+export DATA_PATH=sft/data/step_level_compact_k2_state_on_eval.jsonl
+export MAX_SAMPLES=78
+export RUN_NAME=model_formal_eval_k2
+
+bash eval/scripts/run_tool_use_step_eval.sh model /absolute/path/to/checkpoint
+```
+
+Step 7. Evaluate the final chosen model on the formal test split
+```bash
+cd /home/zkl/pycodes/research/search_sft_code/SimpleDeepSearcher
+
+export CUDA_VISIBLE_DEVICES=0
+export HF_HUB_OFFLINE=1
+export TOKENIZER_NAME_OR_PATH=/home/zkl/.cache/huggingface/hub/models--Qwen--Qwen2.5-Coder-0.5B-Instruct/snapshots/ea3f2471cf1b1f0db85067f1ef93848e38e88c25
+export DATA_PATH=sft/data/step_level_compact_k2_state_on_test.jsonl
+export MAX_SAMPLES=174
+export RUN_NAME=model_formal_test_k2
+
+bash eval/scripts/run_tool_use_step_eval.sh model /absolute/path/to/checkpoint
+```
+
+Useful notes
+- The current formal split is repo-aware:
+  - train: 14 repos
+  - eval: 2 repos
+  - test: 3 repos
+- The current formal compact data still contains natural-language target content in many action steps.
+- So this is valid for the current trainer, but it is not yet a strict tool_call-only dataset.
+
+Expected main files for the current formal experiment
+- sft/data/step_level_raw.jsonl
+- sft/data/step_level_canonical_v0.jsonl
+- sft/data/step_level_compact_k2_state_on.jsonl
+- sft/data/step_level_compact_k2_state_on_train.jsonl
+- sft/data/step_level_compact_k2_state_on_eval.jsonl
+- sft/data/step_level_compact_k2_state_on_test.jsonl
+
+Single recommended command to remember
+```bash
+cd /home/zkl/pycodes/research/search_sft_code/SimpleDeepSearcher && bash sft/scripts/run_formal_sft_compact_k2.sh
+```

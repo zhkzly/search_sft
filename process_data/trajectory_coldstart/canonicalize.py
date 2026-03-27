@@ -453,7 +453,7 @@ def canonicalize_sample(sample: Dict, require_mapped_prefix: bool) -> Tuple[Dict
     canonical_sample["metadata"] = {
         **sample.get("metadata", {}),
         "canonical_tool_name": target_mappings[0]["tool_name"] if target_mappings else None,
-        "canonical_tool_args": target_mappings[0]["tool_args"] if target_mappings else None,
+        "canonical_tool_args": json_dumps(target_mappings[0]["tool_args"]) if target_mappings else None,
         "mapping_status": "mapped",
         "mapping_reason": target_mappings[0]["reason"] if target_mappings else None,
         "prefix_tool_calls_canonicalized": bool(prefix_mappings or not sample.get("prefix_messages")),

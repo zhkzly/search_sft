@@ -5,7 +5,7 @@ import logging
 import math
 from tqdm import tqdm
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Sequence
+from typing import Any, Optional, Dict, Sequence
 from pathlib import Path
 
 import torch
@@ -34,7 +34,6 @@ from torch.utils.data import Dataset
 import random
 from typing import List, Optional, Tuple, Union
 from transformers import AutoModelForCausalLM, TrainingArguments
-from datasets import load_dataset
 from transformers import DataCollatorForSeq2Seq
 import shutil
 
@@ -332,27 +331,48 @@ def resolve_dataset_cache_dir(explicit_cache_dir: Optional[str] = None) -> str:
     return ".cache/hf_datasets"
 
 
+def load_raw_samples(file_path: str) -> list[Dict[str, Any]]:
+    path = Path(file_path)
+    suffixes = {suffix.lower() for suffix in path.suffixes}
+    is_jsonl = bool({".jsonl", ".ndjson"} & suffixes)
+
+    if is_jsonl:
+        samples = []
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                samples.append(json.loads(line))
+        return samples
+
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for key in ("train", "data", "records", "examples"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+        return [payload]
+    raise ValueError(f"Unsupported dataset payload type for {file_path}: {type(payload)!r}")
+
+
 def get_dataset(file_path, tokenizer, other_dataset=False, cache_dir: Optional[str] = None):
     max_length = getattr(tokenizer, "model_max_length", MAX_LENGTH)
-    dataset = load_dataset('json', data_files=file_path, cache_dir=resolve_dataset_cache_dir(cache_dir))
-    train_dataset = dataset["train"]
+    train_dataset = load_raw_samples(file_path)
     file_name = os.path.basename(file_path)
     dataset_name = os.path.splitext(file_name)[0]
+    processor = process_other_data if other_dataset else process
 
-    if other_dataset:
-        tokenized_dataset = train_dataset.map(
-            process_other_data,
-            fn_kwargs={"tokenizer": tokenizer},
-            num_proc=1,
-            load_from_cache_file=False,
-        )
-    else:
-        tokenized_dataset = train_dataset.map(
-            process,
-            fn_kwargs={"tokenizer": tokenizer},
-            num_proc=1,
-            load_from_cache_file=False,
-        )
+    tokenized_dataset = [
+        processor(sample, tokenizer)
+        for sample in tqdm(train_dataset, desc=f"tokenize {dataset_name}")
+    ]
+    if not tokenized_dataset:
+        raise ValueError(f"Empty dataset: {file_path}")
     print_function(next(iter(tokenized_dataset)), tokenizer)
     print(f"len of dataset before filter: {len(tokenized_dataset)}")
     

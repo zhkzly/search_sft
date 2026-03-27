@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from process_data.trajectory_coldstart.canonicalize import canonicalize_assistant_message
-from process_data.trajectory_coldstart.common import iter_jsonl, write_jsonl
+from process_data.trajectory_coldstart.common import iter_jsonl, json_dumps, write_jsonl
 
 
 WORKSPACE_PATH_RE = re.compile(r"(/workspace/[^\s:`]+)")
@@ -427,7 +427,7 @@ def compact_sample(sample: Dict, recent_pairs: int, include_state: bool) -> Tupl
     compact["metadata"] = {
         **sample.get("metadata", {}),
         "canonical_tool_name": target_mappings[0]["tool_name"] if target_mappings else None,
-        "canonical_tool_args": target_mappings[0]["tool_args"] if target_mappings else None,
+        "canonical_tool_args": json_dumps(target_mappings[0]["tool_args"]) if target_mappings else None,
         "mapping_status": "mapped",
         "mapping_reason": target_mappings[0]["reason"] if target_mappings else None,
         "compact_recent_pairs": recent_pairs,
